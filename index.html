@@ -973,49 +973,73 @@ window.addEventListener('afterprint', () => document.body.classList.remove('pc')
 function exportarExcel(periodo){
   const dia = periodo || S.fechaCierre || hoy();
   const vs = S.ventas.filter(v => diaDe(v.fecha).startsWith(dia)).sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
-  const q = c => { const s = String(c == null ? '' : c); return /[";\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
-  const linea = arr => arr.map(q).join(';');
   const suma = k => vs.reduce((a,v) => a + (v[k] || 0), 0);
-  const rows = [];
-  rows.push(linea(['Reporte de ventas - La Maison Buffet']));
-  rows.push(linea(['Fecha', dia]));
-  rows.push(linea(['Apertura de caja', S.caja && S.caja.apertura ? fechaHora(S.caja.apertura) : 'No registrada']));
-  rows.push(linea(['Cierre de caja', S.caja && S.caja.cierre ? fechaHora(S.caja.cierre) : 'Pendiente']));
-  rows.push('');
-  rows.push(linea(['RESUMEN']));
-  rows.push(linea(['Mesas cobradas', vs.length]));
-  rows.push(linea(['Adultos (9+)', suma('adultos')]));
-  rows.push(linea(['Niños (5 a 8)', suma('ninos')]));
-  rows.push(linea(['Menores de 5', suma('pequenos')]));
-  rows.push(linea(['Personas total', suma('personas')]));
-  rows.push(linea(['Total cobrado', vs.reduce((a,v) => a + v.total, 0)]));
-  rows.push('');
-  rows.push(linea(['DETALLE DE COBROS']));
-  rows.push(linea(['Hora','Mesa','Mozo','Adultos','Niños','Menores de 5','Personas','Medio de pago','Total']));
-  vs.forEach(v => rows.push(linea([hora(v.fecha), v.mesa, v.mozo || '', v.adultos ?? v.personas, v.ninos || 0, v.pequenos || 0, v.personas, v.metodo, v.total])));
-  rows.push('');
-  rows.push(linea(['POR MEDIO DE PAGO']));
-  rows.push(linea(['Medio','Cantidad','Total']));
-  METODOS.forEach(m => {
+  const totalCobrado = vs.reduce((a,v) => a + v.total, 0);
+  const txt = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const n = v => Number(v || 0).toLocaleString('es-AR');
+  const money = v => '$ ' + n(v);
+  const tabla = (titulo, cols, filas, numCols = [], total = null) => `
+    <h3>${txt(titulo)}</h3>
+    <table>
+      <tr>${cols.map((c,i) => `<th class="${numCols.includes(i) ? 'num' : ''}">${txt(c)}</th>`).join('')}</tr>
+      ${filas.map(f => `<tr>${f.map((c,i) => `<td class="${numCols.includes(i) ? 'num' : ''}">${txt(c)}</td>`).join('')}</tr>`).join('')}
+      ${total ? `<tr class="tot">${total.map((c,i) => `<td class="${numCols.includes(i) ? 'num' : ''}">${txt(c)}</td>`).join('')}</tr>` : ''}
+    </table>`;
+
+  const resumen = [
+    ['Mesas cobradas', vs.length],
+    ['Adultos (9 años o más)', suma('adultos')],
+    ['Niños (5 a 8 años)', suma('ninos')],
+    ['Menores de 5 años', suma('pequenos')],
+    ['Personas total', suma('personas')],
+    ['Total cobrado', money(totalCobrado)],
+    ['Apertura de caja', S.caja && S.caja.apertura ? fechaHora(S.caja.apertura) : 'No registrada'],
+    ['Cierre de caja', S.caja && S.caja.cierre ? fechaHora(S.caja.cierre) : 'Pendiente']
+  ];
+
+  const cobros = vs.map(v => [diaDe(v.fecha), hora(v.fecha), v.mesa, v.mozo || '', n(v.adultos ?? v.personas), n(v.ninos || 0), n(v.pequenos || 0), n(v.personas), v.metodo, money(v.total)]);
+
+  const medios = METODOS.map(m => {
     const xs = vs.filter(v => v.metodo === m);
-    rows.push(linea([m, xs.length, xs.reduce((a,v) => a + v.total, 0)]));
+    return [m, xs.length, money(xs.reduce((a,v) => a + v.total, 0))];
   });
-  rows.push('');
-  rows.push(linea(['POR MOZO']));
-  rows.push(linea(['Mozo','Mesas','Personas','Total']));
+
   const mozos = {};
   vs.forEach(v => { const k = v.mozo || 'Sin asignar'; mozos[k] = mozos[k] || {n:0,p:0,t:0}; mozos[k].n++; mozos[k].p += v.personas; mozos[k].t += v.total; });
-  Object.entries(mozos).forEach(([k,o]) => rows.push(linea([k, o.n, o.p, o.t])));
-  rows.push('');
-  rows.push(linea(['CONSUMOS EXTRA']));
-  rows.push(linea(['Producto','Cantidad','Monto']));
+  const filasMozos = Object.entries(mozos).map(([k,o]) => [k, o.n, o.p, money(o.t)]);
+
   const cons = {};
-  vs.forEach(v => v.items.forEach(i => { cons[i.n] = cons[i.n] || {c:0,t:0}; cons[i.n].c += i.c; cons[i.n].t += i.p * i.c; }));
-  Object.entries(cons).sort((a,b) => b[1].t - a[1].t).forEach(([k,o]) => rows.push(linea([k, o.c, o.t])));
-  const blob = new Blob(['\uFEFF' + rows.join('\r\n')], {type:'text/csv;charset=utf-8'});
+  vs.forEach(v => (v.items || []).forEach(i => { cons[i.n] = cons[i.n] || {c:0,t:0}; cons[i.n].c += i.c; cons[i.n].t += i.p * i.c; }));
+  const filasCons = Object.entries(cons).sort((a,b) => b[1].t - a[1].t).map(([k,o]) => [k, o.c, money(o.t)]);
+
+  const cuerpo = `
+    <h1>La Maison Buffet</h1>
+    <p class="sub">Reporte de ventas · ${txt(dia)}</p>
+    ${tabla('Resumen', ['Concepto','Valor'], resumen, [1])}
+    ${tabla('Detalle de cobros', ['Fecha','Hora','Mesa','Mozo','Adultos','Niños (5-8)','Menores de 5','Personas','Medio de pago','Total'], cobros, [2,4,5,6,7,9], ['Total','','','','','','',n(suma('personas')),'',money(totalCobrado)])}
+    ${tabla('Por medio de pago', ['Medio de pago','Cantidad','Total'], medios, [1,2], ['Total', vs.length, money(totalCobrado)])}
+    ${tabla('Por mozo', ['Mozo','Mesas','Personas','Total'], filasMozos, [1,2,3])}
+    ${tabla('Consumos extra', ['Producto','Cantidad','Monto'], filasCons, [1,2])}`;
+
+  const estilo = `
+    body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1f1a14}
+    h1{color:#8a6d1d;font-size:22pt;margin:0}
+    .sub{color:#6b5a3a;margin:2px 0 14px}
+    h3{color:#8a6d1d;font-size:13pt;margin:18px 0 6px;border-bottom:2px solid #c9a227}
+    table{border-collapse:collapse;min-width:420px}
+    th{background:#1f1a14;color:#d8b979;font-weight:bold;border:1px solid #8a6d1d;padding:6px 10px;text-align:left}
+    td{border:1px solid #cfc7b5;padding:5px 10px;background:#fffdf7}
+    tr:nth-child(even) td{background:#f7f2e6}
+    .num{text-align:right}
+    tr.tot td{background:#efe3bd;font-weight:bold;border-top:2px solid #8a6d1d}`;
+
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="utf-8"><style>${estilo}</style></head><body>${cuerpo}</body></html>`;
+
+  const blob = new Blob(['\uFEFF' + html], {type:'application/vnd.ms-excel;charset=utf-8'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'ventas-' + dia + '.csv';
+  a.download = 'reporte-' + dia + '.xls';
   document.body.appendChild(a); a.click(); a.remove();
 }
 
