@@ -260,7 +260,7 @@ button{font-size:16px}
   <div class="modal-box">
     <div id="ticket"></div>
     <div class="modal-acc noprint">
-      <button class="pri" onclick="window.print()">Imprimir</button>
+      <button class="pri" onclick="window.print()">Reimprimir</button>
       <button class="sec" onclick="cerrarModal()">Cerrar</button>
     </div>
   </div>
@@ -631,7 +631,7 @@ function renderCerradas(){
         <div class="row"><span>Personas</span><b>${v.personas}</b></div>
         <div class="row"><span>Medio de pago</span><b>${esc(v.metodo)}</b></div>
         <div class="row"><span>Total</span><b>${fmt(v.total)}</b></div>
-        <div class="acciones" style="margin-top:8px"><button class="sec" onclick="mostrarComandaVenta(${v.id})">Ver comanda</button></div>
+        <div class="acciones" style="margin-top:8px"><button class="sec" onclick="mostrarComandaVenta('${v.id}')">Ver comanda</button></div>
       </div>`).join('')}</div>`
     : '<p class="muted">Todavía no se cobró ninguna mesa hoy.</p>'}`;
 }
