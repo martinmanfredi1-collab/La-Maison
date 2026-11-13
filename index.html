@@ -213,6 +213,7 @@ button{font-size:16px}
     <button data-v="cierre" onclick="setVista('cierre')">Cierre de caja</button>
     <button onclick="abrirCaja()">Apertura de caja</button>
     <button data-v="cerradas" id="btnCobradas" onclick="setVista('cerradas')">Mesas cobradas (0)</button>
+    <button data-v="gastos" onclick="setVista('gastos')">Gastos</button>
     <button onclick="cerrarSesion()">Salir</button>
   </nav>
   <div class="config">
@@ -254,6 +255,7 @@ button{font-size:16px}
 <!-- VISTA CIERRE -->
 <section id="vistaCierre" style="display:none"></section>
 <section id="vistaCerradas" style="display:none"></section>
+<section id="vistaGastos" style="display:none"></section>
 
 <!-- MODAL COMANDA -->
 <div class="modal" id="modal" onclick="if(event.target===this)cerrarModal()">
@@ -314,7 +316,7 @@ let S = {...datosIniciales(), vista:'mesas', sel:null, pendiente:null, fechaCier
 function guardar(){
   programarGuardadoNube();
   try{
-    localStorage.setItem(KEY, JSON.stringify({config:S.config, productos:S.productos, mesas:S.mesas, ventas:S.ventas, caja:S.caja, dias:S.dias}));
+    localStorage.setItem(KEY, JSON.stringify({config:S.config, productos:S.productos, mesas:S.mesas, ventas:S.ventas, caja:S.caja, dias:S.dias, gastos:S.gastos}));
     $('guardado').textContent = 'Guardado ' + new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
   }catch(e){
     $('guardado').textContent = 'ERROR al guardar';
@@ -325,7 +327,7 @@ function cargar(){
     const raw = localStorage.getItem(KEY);
     if(!raw) return false;
     const d = JSON.parse(raw);
-    S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas; S.caja = d.caja || null; S.dias = d.dias || {};
+    S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas; S.caja = d.caja || null; S.dias = d.dias || {}; S.gastos = d.gastos || [];
     return true;
   }catch(e){ return false; }
 }
@@ -491,8 +493,10 @@ function resetDia(){
   if(!confirm('RESET DÍA: las ventas de hoy (' + ventasHoy + ') se guardan en "Días guardados" del Cierre de caja, se liberan las mesas y la caja queda sin apertura. ¿Continuar?')) return;
   const deHoy = S.ventas.filter(v => diaDe(v.fecha) === hoyStr);
   if(!S.dias) S.dias = {};
-  S.dias[hoyStr] = {ventas: deHoy, caja: S.caja, guardado: new Date().toISOString()};
+  if(!S.gastos) S.gastos = [];
+  S.dias[hoyStr] = {ventas: deHoy, caja: S.caja, gastos: (S.gastos || []).filter(g => g.fecha === hoyStr), guardado: new Date().toISOString()};
   S.ventas = S.ventas.filter(v => diaDe(v.fecha) !== hoyStr);
+  S.gastos = (S.gastos || []).filter(g => g.fecha !== hoyStr);
   S.mesas = S.mesas.map(m => nuevaMesa(m.id));
   S.caja = {apertura:null, cierre:null};
   S.sel = null;
@@ -612,6 +616,50 @@ function filaTipo(m, tipo, etiqueta, campo, precio, editable){
           ? `<input class="input" type="number" min="0" step="100" value="${precio}" style="width:120px" onchange="setPrecioTipo(${m.id},'${campo}',this.value)">`
           : `<b>${fmt(precio)}</b>`}
       </div>`;
+}
+
+
+function agregarGasto(){
+  const desc = $('gastoDesc').value.trim();
+  const monto = num($('gastoMonto').value);
+  const fecha = $('gastoFecha').value || hoy();
+  if(!desc || monto <= 0){ alert('Poné una descripción y un monto mayor a 0.'); return; }
+  S.gastos.push({id: nid(), fecha, desc, monto, cargado: new Date().toISOString()});
+  S.fechaGastos = fecha;
+  guardar(); renderAll();
+}
+function borrarGasto(id){
+  if(!confirm('¿Borrar este gasto?')) return;
+  S.gastos = S.gastos.filter(g => g.id !== id);
+  guardar(); renderAll();
+}
+function renderGastos(){
+  const f = S.fechaGastos || hoy();
+  const lista = S.gastos.filter(g => g.fecha === f).sort((a,b) => new Date(a.cargado) - new Date(b.cargado));
+  const total = lista.reduce((a,g) => a + g.monto, 0);
+  $('vistaGastos').innerHTML = `
+    <div class="card" style="margin-bottom:12px">
+      <h3>Cargar gasto</h3>
+      <div class="acciones" style="flex-wrap:wrap">
+        <input id="gastoDesc" class="input" placeholder="Descripción (ej: hielo, verdulería)" style="flex:2;min-width:180px">
+        <input id="gastoMonto" class="input" type="number" min="0" step="100" placeholder="Monto $" style="flex:1;min-width:110px">
+        <input id="gastoFecha" class="input" type="date" value="${f}" style="flex:1;min-width:140px">
+        <button class="pri" onclick="agregarGasto()">Agregar gasto</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="acciones" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Gastos del ${f}</h3>
+        <input type="date" class="input" value="${f}" onchange="S.fechaGastos=this.value; renderAll()" style="width:170px">
+      </div>
+      ${lista.length ? `
+      <table>
+        <tr><th>Hora</th><th>Descripción</th><th class="num">Monto</th><th></th></tr>
+        ${lista.map(g => `<tr><td>${hora(g.cargado)}</td><td>${esc(g.desc)}</td><td class="num">${fmt(g.monto)}</td><td><button class="peligro" onclick="borrarGasto('${g.id}')">Borrar</button></td></tr>`).join('')}
+        <tr class="tot"><td colspan="2"><b>Total gastos</b></td><td class="num"><b>${fmt(total)}</b></td><td></td></tr>
+      </table>`
+      : '<p class="muted">No hay gastos cargados para esta fecha.</p>'}
+    </div>`;
 }
 
 function renderCerradas(){
@@ -801,6 +849,7 @@ const fechaHora = iso => iso ? new Date(iso).toLocaleString('es-AR',{day:'2-digi
 function abrirCaja(){
   if(!S.caja) S.caja = {apertura:null, cierre:null};
   if(!S.dias) S.dias = {};
+  if(!S.gastos) S.gastos = [];
   if(S.caja.apertura && !S.caja.cierre){
     if(!confirm('La caja está abierta desde ' + fechaHora(S.caja.apertura) + '. ¿Querés reemplazar la apertura por la hora de ahora?')) return;
   }
@@ -822,6 +871,7 @@ function recuperarDia(dia){
   const ids = new Set(S.ventas.map(v => v.id));
   d.ventas.forEach(v => { if(!ids.has(v.id)) S.ventas.push(v); });
   if((!S.caja || !S.caja.apertura) && d.caja && d.caja.apertura) S.caja = d.caja;
+  (d.gastos || []).forEach(g => { if(!S.gastos.some(x => x.id === g.id)) S.gastos.push(g); });
   guardar(); renderAll();
   alert('Día ' + dia + ' recuperado.');
 }
@@ -1012,6 +1062,8 @@ function exportarExcel(periodo){
   vs.forEach(v => (v.items || []).forEach(i => { cons[i.n] = cons[i.n] || {c:0,t:0}; cons[i.n].c += i.c; cons[i.n].t += i.p * i.c; }));
   const filasCons = Object.entries(cons).sort((a,b) => b[1].t - a[1].t).map(([k,o]) => [k, o.c, money(o.t)]);
 
+  const gastosDia = (S.gastos || []).filter(g => g.fecha.startsWith(dia)).sort((a,b) => new Date(a.cargado) - new Date(b.cargado));
+  const totalGastos = gastosDia.reduce((a,g) => a + g.monto, 0);
   const cuerpo = `
     <h1>La Maison Buffet</h1>
     <p class="sub">Reporte de ventas · ${txt(dia)}</p>
@@ -1019,7 +1071,8 @@ function exportarExcel(periodo){
     ${tabla('Detalle de cobros', ['Fecha','Hora','Mesa','Mozo','Adultos','Niños (5-8)','Menores de 5','Personas','Medio de pago','Total'], cobros, [2,4,5,6,7,9], ['Total','','','','','','',n(suma('personas')),'',money(totalCobrado)])}
     ${tabla('Por medio de pago', ['Medio de pago','Cantidad','Total'], medios, [1,2], ['Total', vs.length, money(totalCobrado)])}
     ${tabla('Por mozo', ['Mozo','Mesas','Personas','Total'], filasMozos, [1,2,3])}
-    ${tabla('Consumos extra', ['Producto','Cantidad','Monto'], filasCons, [1,2])}`;
+    ${tabla('Consumos extra', ['Producto','Cantidad','Monto'], filasCons, [1,2])}
+    ${tabla('Gastos', ['Hora','Fecha','Descripción','Monto'], gastosDia.map(g => [hora(g.cargado), g.fecha, g.desc, money(g.monto)]), [3], ['Total','','', money(totalGastos)])}`;
 
   const estilo = `
     body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1f1a14}
@@ -1058,7 +1111,7 @@ function aplicarRespaldo(txt){
     const d = JSON.parse(txt);
     if(!d.mesas || !d.productos || !d.ventas || !d.config) throw new Error('formato');
     if(!confirm('Esto reemplaza TODOS los datos actuales por los del respaldo. ¿Continuar?')) return;
-    S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas; S.caja = d.caja || null; S.dias = d.dias || {};
+    S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas; S.caja = d.caja || null; S.dias = d.dias || {}; S.gastos = d.gastos || [];
     S.sel = null;
     renderAll();
     alert('Respaldo importado correctamente.');
@@ -1104,6 +1157,7 @@ function renderAll(){
   S.mesas.forEach(ensureMesa);
   if(!S.caja) S.caja = {apertura:null, cierre:null};
   if(!S.dias) S.dias = {};
+  if(!S.gastos) S.gastos = [];
   if(S.config.precioNino == null) S.config.precioNino = 0;
   if(S.config.precioPequeno == null) S.config.precioPequeno = 0;
   guardar();
@@ -1112,9 +1166,11 @@ function renderAll(){
   $('vistaProductos').style.display = S.vista === 'productos' ? 'block' : 'none';
   $('vistaCierre').style.display = S.vista === 'cierre' ? 'block' : 'none';
   $('vistaCerradas').style.display = S.vista === 'cerradas' ? 'block' : 'none';
+  $('vistaGastos').style.display = S.vista === 'gastos' ? 'block' : 'none';
   if(S.vista === 'mesas'){ renderSalon(); renderPanel(); }
   else if(S.vista === 'productos'){ renderProductos(); }
   else if(S.vista === 'cerradas'){ renderCerradas(); }
+  else if(S.vista === 'gastos'){ renderGastos(); }
   else { renderCierre(); }
 }
 
@@ -1148,7 +1204,7 @@ function iniciarSupabase(){
     SB = window.supabase.createClient(SUPA_URL, SUPA_KEY);
   }
 }
-function payloadActual(){ return {config:S.config, productos:S.productos, mesas:S.mesas, ventas:S.ventas, caja:S.caja, dias:S.dias}; }
+function payloadActual(){ return {config:S.config, productos:S.productos, mesas:S.mesas, ventas:S.ventas, caja:S.caja, dias:S.dias, gastos:S.gastos}; }
 function programarGuardadoNube(){
   if(!SB || !NUBE_LISTA) return;
   clearTimeout(saveTimer);
@@ -1162,7 +1218,7 @@ async function cargarDeNube(){
   if(error){ alert('No se pudo leer la nube: ' + error.message); return false; }
   if(data && data.data){
     const d = data.data;
-    S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas || []; S.caja = d.caja || null; S.dias = d.dias || {};
+    S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas || []; S.caja = d.caja || null; S.dias = d.dias || {}; S.gastos = d.gastos || [];
   }
   return true;
 }
@@ -1189,7 +1245,7 @@ function exportarMes(){
 
 if(!cargar()){
   const d = datosIniciales();
-  S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas; S.caja = d.caja || null; S.dias = d.dias || {};
+  S.config = d.config; S.productos = d.productos; S.mesas = d.mesas; S.ventas = d.ventas; S.caja = d.caja || null; S.dias = d.dias || {}; S.gastos = d.gastos || [];
 }
 renderAll();
 iniciarSupabase();
