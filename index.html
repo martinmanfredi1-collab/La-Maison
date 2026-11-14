@@ -429,22 +429,58 @@ function cambiarItem(mid, pid, d){
   renderAll();
 }
 
+
+function montoMetodo(v, metodo){
+  if(v.pagos) return v.pagos.filter(p => p.metodo === metodo).reduce((a,p) => a + p.monto, 0);
+  return v.metodo === metodo ? v.total : 0;
+}
+function textoPagos(v){
+  return v.pagos ? v.pagos.map(p => p.metodo + ' ' + fmt(p.monto)).join(' + ') : (v.metodo || '');
+}
+
 function cobrar(id){
   S.pendiente = id;
   $('pagoTotal').textContent = fmt(totalMesa(mesa(id)));
-  $('pagoBtns').innerHTML = METODOS.map((m,i) =>
-    `<button class="${i===0?'oro':''}" onclick="confirmarCobro('${m}')">${m}</button>`).join('');
+  $('pagoBtns').innerHTML = `
+    <div style="width:100%">
+      ${METODOS.map(m => `
+        <div class="row" style="align-items:center">
+          <span>${m}</span>
+          <input class="input pago-in" data-m="${m}" type="number" min="0" step="100" value="0" oninput="actualizarRestante()" style="width:140px">
+        </div>`).join('')}
+      <div class="row"><span>Falta cobrar</span><b id="pagoRestante"></b></div>
+      <div class="acciones" style="margin-top:10px">
+        <button id="btnCobrar" class="pri" onclick="confirmarCobroMixto()" disabled>Confirmar cobro</button>
+      </div>
+    </div>`;
+  actualizarRestante();
   $('pagoModal').style.display = 'flex';
+}
+function actualizarRestante(){
+  if(S.pendiente == null) return;
+  const total = totalMesa(mesa(S.pendiente));
+  const suma = [...document.querySelectorAll('.pago-in')].reduce((a,i) => a + num(i.value), 0);
+  const resto = total - suma;
+  $('pagoRestante').textContent = fmt(resto);
+  $('btnCobrar').disabled = resto !== 0;
+}
+function confirmarCobroMixto(){
+  const pagos = [...document.querySelectorAll('.pago-in')].map(i => ({metodo: i.dataset.m, monto: num(i.value)})).filter(p => p.monto > 0);
+  if(!pagos.length) return;
+  confirmarCobro(pagos);
 }
 function cancelarCobro(){
   S.pendiente = null;
   $('pagoModal').style.display = 'none';
 }
-function confirmarCobro(metodo){
+function confirmarCobro(pagos){
   const id = S.pendiente;
   if(id == null) return;
   const m = mesa(id);
   const total = totalMesa(m);
+  const sumaPagos = pagos.reduce((a,p) => a + p.monto, 0);
+  if(sumaPagos !== total){ alert('Los pagos suman ' + fmt(sumaPagos) + ' y la cuenta es ' + fmt(total) + '. Tienen que coincidir.'); return; }
+  const metodo = pagos.length === 1 ? pagos[0].metodo : pagos.map(p => p.metodo).join(' + ');
   m.estado = 'pagada';
   m.cierre = Date.now();
   m.metodo = metodo;
@@ -458,6 +494,7 @@ function confirmarCobro(metodo){
     items: m.items.map(i => ({n:i.n, p:i.p, c:i.c})),
     total,
     metodo,
+    pagos,
     mozo: nombreMozo(m.mozo) || 'Sin asignar'
   });
   S.mesas = S.mesas.map(x => x.id === id ? nuevaMesa(id) : x);
@@ -677,7 +714,7 @@ function renderCerradas(){
         <h3>Mesa ${v.mesa} · ${hora(v.fecha)}</h3>
         <div class="row"><span>Mozo</span><b>${esc(v.mozo || 'Sin asignar')}</b></div>
         <div class="row"><span>Personas</span><b>${v.personas}</b></div>
-        <div class="row"><span>Medio de pago</span><b>${esc(v.metodo)}</b></div>
+        <div class="row"><span>Medio de pago</span><b>${esc(textoPagos(v))}</b></div>
         <div class="row"><span>Total</span><b>${fmt(v.total)}</b></div>
         <div class="acciones" style="margin-top:8px"><button class="sec" onclick="mostrarComandaVenta('${v.id}')">Ver comanda</button></div>
       </div>`).join('')}</div>`
@@ -912,8 +949,8 @@ function renderCierre(){
   const personas = vs.reduce((a,v) => a + v.personas, 0);
 
   const porMetodo = METODOS.map(m => {
-    const xs = vs.filter(v => v.metodo === m);
-    return {m, n:xs.length, t:xs.reduce((a,v) => a + v.total, 0)};
+    const xs = vs.filter(v => montoMetodo(v, m) > 0);
+    return {m, n:xs.length, t:vs.reduce((a,v) => a + montoMetodo(v, m), 0)};
   });
 
   const consumos = {};
@@ -967,7 +1004,7 @@ function renderCierre(){
       <table>
         <thead><tr><th>Hora</th><th>Mesa</th><th class="num">Pers.</th><th>Medio</th><th class="num">Total</th></tr></thead>
         <tbody>
-          ${vs.map(v => `<tr><td>${hora(v.fecha)}</td><td>${v.mesa}</td><td class="num">${v.personas}</td><td>${esc(v.metodo)}</td><td class="num">${fmt(v.total)}</td></tr>`).join('')}
+          ${vs.map(v => `<tr><td>${hora(v.fecha)}</td><td>${v.mesa}</td><td class="num">${v.personas}</td><td>${esc(textoPagos(v))}</td><td class="num">${fmt(v.total)}</td></tr>`).join('')}
         </tbody>
       </table>` : `<p class="muted">Sin cobros.</p>`}
     </div>
@@ -1047,11 +1084,11 @@ function exportarExcel(periodo){
     ['Cierre de caja', S.caja && S.caja.cierre ? fechaHora(S.caja.cierre) : 'Pendiente']
   ];
 
-  const cobros = vs.map(v => [diaDe(v.fecha), hora(v.fecha), v.mesa, v.mozo || '', n(v.adultos ?? v.personas), n(v.ninos || 0), n(v.pequenos || 0), n(v.personas), v.metodo, money(v.total)]);
+  const cobros = vs.map(v => [diaDe(v.fecha), hora(v.fecha), v.mesa, v.mozo || '', n(v.adultos ?? v.personas), n(v.ninos || 0), n(v.pequenos || 0), n(v.personas), textoPagos(v), money(v.total)]);
 
   const medios = METODOS.map(m => {
-    const xs = vs.filter(v => v.metodo === m);
-    return [m, xs.length, money(xs.reduce((a,v) => a + v.total, 0))];
+    const xs = vs.filter(v => montoMetodo(v, m) > 0);
+    return [m, xs.length, money(vs.reduce((a,v) => a + montoMetodo(v, m), 0))];
   });
 
   const mozos = {};
